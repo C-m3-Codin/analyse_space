@@ -1,0 +1,60 @@
+========================================
+       DISK USAGE ANALYSIS REPORT      
+========================================
+Generated: Thu May 14 13:04:17 UTC 2026
+Target Directory: /workspace
+
+========================================
+   TOP 10 DIRECTORIES BY SIZE          
+========================================
+
+1.4M       ./.git
+
+========================================
+   DETAILED BREAKDOWN OF TOP DIRECTORIES
+========================================
+
+Directory: ./.git (1.4M)
+----------------------------------------
+  1.3M       ./.git/objects
+  64K        ./.git/hooks
+  36K        ./.git/logs
+  32K        ./.git/refs
+  8.0K       ./.git/info
+  4.0K       ./.git/shallow
+  4.0K       ./.git/packed-refs
+  4.0K       ./.git/index
+  4.0K       ./.git/description
+  4.0K       ./.git/config
+
+========================================
+   TOP 10 FILES BY SIZE                
+========================================
+
+2.1M       ./drive-analyzer
+1.2M       ./.git/objects/pack/pack-970ea78c43222087132af23fe27256836f49fba7.pack
+12K        ./main.go
+8.0K       ./.git/hooks/pre-rebase.sample
+8.0K       ./.git/hooks/fsmonitor-watchman.sample
+4.0K       ./readme.md
+4.0K       ./go.mod
+4.0K       ./disk_usage_report.txt
+4.0K       ./disk-analyzer.sh
+4.0K       ./.gitignore
+
+========================================
+   SUMMARY STATISTICS                  
+========================================
+
+Total disk usage in target directory:
+3.5M	.
+
+Total number of files:
+36
+
+Total number of directories:
+18
+
+========================================
+         END OF REPORT                 
+========================================
