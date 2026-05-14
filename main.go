@@ -14,6 +14,21 @@ import (
 	"time"
 )
 
+// DirBreakdown holds breakdown information for a directory
+type DirBreakdown struct {
+	Name     string
+	Path     string
+	Size     int64
+	Items    []BreakdownItem
+}
+
+// BreakdownItem represents a file or subdirectory in a breakdown
+type BreakdownItem struct {
+	Name  string
+	Size  int64
+	IsDir bool
+}
+
 // Node represents a directory or file in the tree
 type Node struct {
 	Name     string
@@ -198,6 +213,10 @@ func analyzeDrive(rootPath, driveName string) {
 	fmt.Printf("TotalAlloc: %s\n", formatSize(int64(memStats.TotalAlloc)))
 	fmt.Printf("Sys: %s\n", formatSize(int64(memStats.Sys)))
 	fmt.Printf("NumGC: %d\n", memStats.NumGC)
+
+	// Generate HTML report
+	fmt.Println("\n\n🌐 Generating HTML Report...")
+	generateHTMLReport(root, driveName, totalSize, atomic.LoadInt64(&nodeCount), elapsed)
 }
 
 func processDirectory(node *Node, depth int, parentWg *sync.WaitGroup) {
@@ -434,4 +453,428 @@ func truncatePath(path string, maxLen int) string {
 		return path[:maxLen]
 	}
 	return "..." + path[len(path)-maxLen+3:]
+}
+
+// generateHTMLReport creates an interactive HTML report
+func generateHTMLReport(root *Node, driveName string, totalSize int64, nodeCount int64, elapsed time.Duration) {
+	filename := "disk_usage_report.html"
+	
+	file, err := os.Create(filename)
+	if err != nil {
+		fmt.Printf("Error creating HTML file: %v\n", err)
+		return
+	}
+	defer file.Close()
+
+	// Collect top directories
+	topDirs := collectTopDirectories(root, 10)
+
+	// Collect file type stats
+	fileTypeData := collectFileTypeStats()
+
+	// Collect top files
+	topFilesData := collectTopFilesData(20)
+
+	html := `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Disk Usage Report - ` + driveName + `</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { opacity: 0.9; font-size: 1.1em; }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+        .summary-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            text-align: center;
+            border-left: 4px solid #3498db;
+        }
+        .summary-card h3 { color: #7f8c8d; font-size: 0.9em; margin-bottom: 10px; }
+        .summary-card .value { font-size: 1.8em; font-weight: bold; color: #2c3e50; }
+        .section { padding: 30px; border-bottom: 1px solid #eee; }
+        .section h2 { 
+            color: #2c3e50; 
+            margin-bottom: 20px; 
+            padding-bottom: 10px;
+            border-bottom: 3px solid #3498db;
+            display: inline-block;
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 15px;
+        }
+        th, td { 
+            padding: 12px 15px; 
+            text-align: left; 
+            border-bottom: 1px solid #ddd;
+        }
+        th { 
+            background: #3498db; 
+            color: white; 
+            font-weight: 600;
+        }
+        tr:hover { background: #f5f6fa; }
+        .size-col { font-family: monospace; color: #e74c3c; font-weight: bold; }
+        .bar-container { 
+            width: 100%; 
+            background: #ecf0f1; 
+            border-radius: 5px; 
+            height: 20px;
+            overflow: hidden;
+        }
+        .bar { 
+            height: 100%; 
+            background: linear-gradient(90deg, #3498db, #2ecc71);
+            transition: width 0.3s;
+        }
+        .breakdown { 
+            margin-top: 15px; 
+            padding: 15px; 
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .breakdown h4 { color: #7f8c8d; margin-bottom: 10px; }
+        .breakdown-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px dashed #ddd;
+        }
+        .breakdown-item:last-child { border-bottom: none; }
+        .icon { margin-right: 8px; }
+        .toggle-btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+        .toggle-btn:hover { background: #2980b9; }
+        .hidden { display: none; }
+        .file-type-bar { display: flex; align-items: center; gap: 10px; }
+        .file-type-name { min-width: 150px; font-weight: 600; }
+        .progress-bg { 
+            flex: 1; 
+            background: #ecf0f1; 
+            border-radius: 5px; 
+            height: 25px;
+            overflow: hidden;
+        }
+        .progress-fill { 
+            height: 100%; 
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 10px;
+            color: white;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📊 Disk Usage Analysis Report</h1>
+            <p>Drive: ` + driveName + ` | Generated: ` + time.Now().Format("2006-01-02 15:04:05") + `</p>
+        </div>
+
+        <div class="summary-grid">
+            <div class="summary-card">
+                <h3>📁 Total Size</h3>
+                <div class="value">` + formatSize(totalSize) + `</div>
+            </div>
+            <div class="summary-card">
+                <h3>🔍 Nodes Scanned</h3>
+                <div class="value">` + fmt.Sprintf("%d", nodeCount) + `</div>
+            </div>
+            <div class="summary-card">
+                <h3>⏱️ Scan Time</h3>
+                <div class="value">` + elapsed.Round(time.Millisecond).String() + `</div>
+            </div>
+            <div class="summary-card">
+                <h3>📄 Top Files</h3>
+                <div class="value">` + fmt.Sprintf("%d", len(topFilesData)) + `</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🏆 Top 10 Directories by Size</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Directory</th>
+                        <th>Size</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>`
+
+	for i, dir := range topDirs {
+		html += fmt.Sprintf(`
+                    <tr>
+                        <td>%d</td>
+                        <td><span class="icon">📂</span>%s</td>
+                        <td class="size-col">%s</td>
+                        <td><button class="toggle-btn" onclick="toggleBreakdown('breakdown-%d')">View Breakdown</button></td>
+                    </tr>`, i+1, dir.Name, formatSize(dir.Size), i)
+
+		html += fmt.Sprintf(`
+                    <tr id="breakdown-%d" class="hidden">
+                        <td colspan="4">
+                            <div class="breakdown">
+                                <h4>Contents of %s:</h4>`, dir.Name)
+
+		for j, item := range dir.Items {
+			if j >= 10 {
+				break
+			}
+			icon := "📄"
+			if item.IsDir {
+				icon = "📁"
+			}
+			html += fmt.Sprintf(`
+                                <div class="breakdown-item">
+                                    <span><span class="icon">%s</span>%s</span>
+                                    <span class="size-col">%s</span>
+                                </div>`, icon, item.Name, formatSize(item.Size))
+		}
+		if len(dir.Items) > 10 {
+			html += fmt.Sprintf(`<div style="text-align:center;padding:10px;color:#7f8c8d;">... and %d more items</div>`, len(dir.Items)-10)
+		}
+
+		html += `
+                            </div>
+                        </td>
+                    </tr>`
+	}
+
+	html += `
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>📈 File Type Distribution</h2>`
+
+	totalForPercent := int64(0)
+	for _, ft := range fileTypeData {
+		totalForPercent += ft.Size
+	}
+
+	for i, ft := range fileTypeData {
+		if i >= 15 {
+			break
+		}
+		percent := float64(0)
+		if totalForPercent > 0 {
+			percent = float64(ft.Size) / float64(totalForPercent) * 100
+		}
+		ext := ft.Extension
+		if ext == "" {
+			ext = "(no extension)"
+		}
+		html += fmt.Sprintf(`
+            <div class="file-type-bar">
+                <span class="file-type-name">%s</span>
+                <div class="progress-bg">
+                    <div class="progress-fill" style="width: %.1f%%;">%.1f%%</div>
+                </div>
+                <span style="min-width:100px;text-align:right;font-weight:bold;">%s</span>
+            </div>`, ext, percent, percent, formatSize(ft.Size))
+	}
+
+	html += `
+        </div>
+
+        <div class="section">
+            <h2>🔥 Top 20 Largest Files</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>File Path</th>
+                        <th>Size</th>
+                    </tr>
+                </thead>
+                <tbody>`
+
+	for i, f := range topFilesData {
+		html += fmt.Sprintf(`
+                    <tr>
+                        <td>%d</td>
+                        <td style="font-family:monospace;font-size:0.9em;">%s</td>
+                        <td class="size-col">%s</td>
+                    </tr>`, i+1, f.Path, formatSize(f.Size))
+	}
+
+	html += `
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        function toggleBreakdown(id) {
+            var el = document.getElementById(id);
+            if (el.classList.contains('hidden')) {
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>`
+
+	_, err = file.WriteString(html)
+	if err != nil {
+		fmt.Printf("Error writing HTML file: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ HTML report saved to: %s\n", filename)
+}
+
+// FileTypeStat holds file type statistics
+type FileTypeStat struct {
+	Extension string
+	Size      int64
+}
+
+func collectFileTypeStats() []FileTypeStat {
+	type fileTypeStat struct {
+		ext  string
+		size int64
+	}
+
+	var stats []fileTypeStat
+	fileTypeMutex.Lock()
+	for ext, size := range fileTypeStats {
+		stats = append(stats, fileTypeStat{ext, size})
+	}
+	fileTypeMutex.Unlock()
+
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].size > stats[j].size
+	})
+
+	result := make([]FileTypeStat, len(stats))
+	for i, s := range stats {
+		result[i] = FileTypeStat{Extension: s.ext, Size: s.size}
+	}
+	return result
+}
+
+func collectTopDirectories(root *Node, limit int) []DirBreakdown {
+	var dirs []DirBreakdown
+
+	var collect func(node *Node)
+	collect = func(node *Node) {
+		if node.IsDir && node.Size > 0 {
+			items := make([]BreakdownItem, 0)
+			for _, child := range node.Children {
+				items = append(items, BreakdownItem{
+					Name:  child.Name,
+					Size:  child.Size,
+					IsDir: child.IsDir,
+				})
+			}
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].Size > items[j].Size
+			})
+
+			dirs = append(dirs, DirBreakdown{
+				Name:  node.Name,
+				Path:  node.Path,
+				Size:  node.Size,
+				Items: items,
+			})
+		}
+		for _, child := range node.Children {
+			if child.IsDir {
+				collect(child)
+			}
+		}
+	}
+
+	collect(root)
+
+	sort.Slice(dirs, func(i, j int) bool {
+		return dirs[i].Size > dirs[j].Size
+	})
+
+	if len(dirs) > limit {
+		dirs = dirs[:limit]
+	}
+
+	return dirs
+}
+
+func collectTopFilesData(limit int) []struct {
+	Path string
+	Size int64
+} {
+	topFilesMutex.Lock()
+	defer topFilesMutex.Unlock()
+
+	result := make([]struct {
+		Path string
+		Size int64
+	}, 0)
+
+	count := limit
+	if len(topFiles) < limit {
+		count = len(topFiles)
+	}
+
+	for i := 0; i < count; i++ {
+		result = append(result, struct {
+			Path string
+			Size int64
+		}{
+			Path: topFiles[i].Path,
+			Size: topFiles[i].Size,
+		})
+	}
+
+	return result
 }
